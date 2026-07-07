@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>🌍 Weltspiel & Hauptstädte Pro</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
+<style>
+    :root { 
+        --bg: #f8fafc; --text: #1e293b; --accent: #22c55e; --error: #ef4444; 
+        --country-default: #e2e8f0; --country-border: #94a3b8;
+    }
+    html, body { margin:0; height:100%; font-family: sans-serif; background: var(--bg); color: var(--text); overflow:hidden; touch-action: none; }
+    #map { height:100%; width:100%; background: #d4eaf7; }
+
+    #topBar {
+        position: absolute; top:0; left:0; width:100%; z-index:1000;
+        background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(8px);
+        padding: 10px; display: grid; grid-template-columns: auto 1fr auto; align-items: center;
+        border-bottom: 1px solid #e2e8f0;
+    }
+    #message { font-weight: bold; font-size: 18px; text-align: center; padding: 0 10px; }
+    #smiley { font-size: 24px; margin-left: 10px; }
+    #scoreDisplay { font-size: 14px; text-align: right; color: #64748b; padding-right:15px; }
+
+    .overlay {
+        position: absolute; bottom: 120px; left: 50%; transform: translateX(-50%);
+        width: 85%; max-width: 350px; padding: 15px; border-radius: 12px;
+        text-align: center; z-index: 2000; display: none; pointer-events: none;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.1); font-size: 18px; font-weight: bold; color: white;
+    }
+    #correct { background: var(--accent); }
+    #solution { background: var(--error); }
+
+    #start {
+        position:absolute; inset:0; background: var(--bg);
+        display:flex; flex-direction:column; align-items:center; justify-content:center; 
+        z-index:3000; padding: 20px; text-align: center; overflow-y: auto;
+    }
+    input, select { padding:10px; margin:5px; border-radius:8px; border:1px solid #e2e8f0; width: 80%; max-width: 250px; font-size: 16px; }
+    #start button { padding:15px 30px; border:none; border-radius:8px; background: #3b82f6; color:white; font-weight:bold; font-size:18px; cursor:pointer; margin-top:15px; }
+    #endButton { position: absolute; bottom: 20px; right: 20px; z-index: 1000; padding: 10px; background: white; border: 1px solid #ccc; border-radius: 20px; font-size: 12px; }
+    label { font-size: 13px; color: #64748b; margin-top: 10px; font-weight: bold; }
+</style>
+</head>
+<body>
+
+<div id="start">
+    <h1>🌍 Weltspiel</h1>
+    <label>Anzahl Spieler:</label>
+    <input type="number" id="playerCount" min="1" max="4" value="1">
+    <div id="playerInputs"></div>
+    
+    <label>Region:</label>
+    <select id="difficulty">
+        <option value="world">Ganze Welt</option>
+        <option value="europe">Europa</option>
+    </select>
+
+    <label>Spiel-Modus:</label>
+    <select id="gameMode">
+        <option value="country">Länder finden</option>
+        <option value="capital">Hauptstädte finden</option>
+    </select>
+
+    <button onclick="startGame()">Spiel starten</button>
+</div>
+
+<div id="topBar">
+    <div id="smiley">🤔</div>
+    <div id="message">Bereit?</div>
+    <div id="scoreDisplay"></div>
+</div>
+
+<div id="map"></div>
+<button id="endButton" onclick="location.reload()">Beenden</button>
+
+<div id="correct" class="overlay"></div>
+<div id="solution" class="overlay"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// Umfassende Datenbank (Deutsch/Englisch Mapping für GeoJSON Kompatibilität)
+const capitals = {
+    // Europa
+    "Germany": "Berlin", "France": "Paris", "Italy": "Rom", "Spain": "Madrid", "Poland": "Warschau",
+    "Ukraine": "Kiew", "Sweden": "Stockholm", "Norway": "Oslo", "Finland": "Helsinki", "Austria": "Wien",
+    "Switzerland": "Bern", "United Kingdom": "London", "Ireland": "Dublin", "Netherlands": "Amsterdam",
+    "Belgium": "Brüssel", "Portugal": "Lissabon", "Greece": "Athen", "Denmark": "Kopenhagen",
+    "Czech Republic": "Prag", "Hungary": "Budapest", "Romania": "Bukarest", "Bulgaria": "Sofia",
+    "Slovakia": "Bratislava", "Croatia": "Zagreb", "Slovenia": "Ljubljana", "Estonia": "Tallinn",
+    "Latvia": "Riga", "Lithuania": "Vilnius", "Serbia": "Belgrad", "Bosnia and Herzegovina": "Sarajevo",
+    "Albania": "Tirana", "Macedonia": "Skopje", "Moldova": "Chișinău", "Iceland": "Reykjavík", "Belarus": "Minsk",
+    // Nord- & Südamerika
+    "USA": "Washington D.C.", "Canada": "Ottawa", "Mexico": "Mexiko-Stadt", "Brazil": "Brasília",
+    "Argentina": "Buenos Aires", "Chile": "Santiago", "Colombia": "Bogotá", "Peru": "Lima",
+    "Venezuela": "Caracas", "Ecuador": "Quito", "Bolivia": "Sucre", "Paraguay": "Asunción",
+    "Uruguay": "Montevideo", "Cuba": "Havanna", "Panama": "Panama-Stadt",
+    // Asien & Ozeanien
+    "China": "Peking", "Japan": "Tokio", "India": "Neu-Delhi", "South Korea": "Seoul", "Russia": "Moskau",
+    "Australia": "Canberra", "New Zealand": "Wellington", "Indonesia": "Jakarta", "Vietnam": "Hanoi",
+    "Thailand": "Bangkok", "Philippines": "Manila", "Pakistan": "Islamabad", "Bangladesh": "Dhaka",
+    "Iran": "Teheran", "Iraq": "Bagdad", "Saudi Arabia": "Riad", "Israel": "Jerusalem",
+    "Turkey": "Ankara", "Kazakhstan": "Astana", "Uzbekistan": "Taschkent", "Afghanistan": "Kabul",
+    "Mongolia": "Ulan-Bator", "Nepal": "Kathmandu", "Sri Lanka": "Colombo",
+    // Afrika
+    "Egypt": "Kairo", "South Africa": "Pretoria", "Nigeria": "Abuja", "Kenya": "Nairobi",
+    "Ethiopia": "Addis Abeba", "Morocco": "Rabat", "Algeria": "Algier", "Tunisia": "Tunis",
+    "Libya": "Tripolis", "Sudan": "Khartum", "Senegal": "Dakar", "Ghana": "Accra",
+    "Angola": "Luanda", "Tanzania": "Dodoma", "Uganda": "Kampala", "Namibia": "Windhuk",
+    "Madagascar": "Antananarivo", "Zimbabwe": "Harare", "Zambia": "Lusaka", "Mali": "Bamako"
+};
+
+let map, geoLayer, countryLayers = {};
+let players=[], currentPlayer=0, scoreBoard={};
+let currentCountry="", attempts=0, countriesPool=[];
+let mode = "country";
+
+document.getElementById("playerCount").addEventListener("change", createInputs);
+createInputs();
+
+function createInputs(){
+    let n = document.getElementById("playerCount").value;
+    let div = document.getElementById("playerInputs");
+    div.innerHTML = "";
+    for(let i=1; i<=n; i++) div.innerHTML += `<input id="p${i}" placeholder="Name Spieler ${i}">`;
+}
+
+function startGame(){
+    let n = document.getElementById("playerCount").value;
+    mode = document.getElementById("gameMode").value;
+    players = [];
+    for(let i=1; i<=n; i++){
+        let name = document.getElementById("p"+i).value || "S"+i;
+        players.push(name); scoreBoard[name] = 0;
+    }
+    document.getElementById("start").style.display = "none";
+    initMap();
+}
+
+function initMap(){
+    if(map) return;
+    map = L.map("map", { zoomSnap: 0.1, attributionControl: false, minZoom: 2 }).setView([20,0], 2);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png').addTo(map);
+
+    fetch("https://raw.githubusercontent.com/johan/world.geo.json/master/countries.geo.json")
+    .then(r => r.json())
+    .then(data => {
+        geoLayer = L.geoJSON(data, {
+            style: { color: "#94a3b8", weight: 1, fillColor: "#e2e8f0", fillOpacity: 1 },
+            onEachFeature: (f, l) => {
+                let name = f.properties.name;
+                // Fix für USA Namensunterschiede im GeoJSON
+                if(name === "United States of America") name = "USA";
+                countryLayers[name] = l;
+                l.on("click", (e) => { L.DomEvent.stopPropagation(e); handleClick(name); });
+            }
+        }).addTo(map);
+        updatePool();
+        nextTurn();
+    });
+}
+
+function updatePool(){
+    let diff = document.getElementById("difficulty").value;
+    // Wir nehmen nur Länder, für die wir eine Hauptstadt definiert haben
+    let allAvailable = Object.keys(countryLayers).filter(c => capitals[c]);
+
+    if(diff === "europe"){
+        const europe = ["Germany", "France", "Italy", "Spain", "Poland", "Ukraine", "Sweden", "Norway", "Finland", "Austria", "Switzerland", "United Kingdom", "Ireland", "Netherlands", "Belgium", "Portugal", "Greece", "Denmark", "Czech Republic", "Hungary", "Romania", "Bulgaria", "Slovakia", "Croatia", "Slovenia", "Estonia", "Latvia", "Lithuania", "Serbia", "Bosnia and Herzegovina", "Albania", "Macedonia", "Moldova", "Iceland", "Belarus"];
+        countriesPool = allAvailable.filter(c => europe.includes(c));
+    } else {
+        countriesPool = allAvailable;
+    }
+}
+
+function nextTurn(){
+    attempts = 0; resetStyles();
+    currentCountry = countriesPool[Math.floor(Math.random() * countriesPool.length)];
+    
+    let question = mode === "country" ? `Suche: <b>${currentCountry}</b>` : `Hauptstadt von: <b>${capitals[currentCountry]}</b>`;
+    
+    document.getElementById("message").innerHTML = question;
+    document.getElementById("scoreDisplay").innerHTML = `${players[currentPlayer]}: ${scoreBoard[players[currentPlayer]]}`;
+    document.getElementById("smiley").innerHTML = "🤔";
+}
+
+function handleClick(name){
+    if(name === currentCountry){
+        scoreBoard[players[currentPlayer]] += (attempts === 0 ? 3 : 1);
+        showFeedback(true);
+    } else {
+        attempts++;
+        let clicked = countryLayers[name];
+        if(clicked) {
+            clicked.setStyle({ fillColor: "#fca5a5" });
+            setTimeout(() => { if(currentCountry !== name) clicked.setStyle({ fillColor: "#e2e8f0" }) }, 400);
+        }
+
+        if(attempts === 1) {
+            document.getElementById("smiley").innerHTML = "📍";
+            map.flyTo(countryLayers[currentCountry].getBounds().getCenter(), 3.5, { duration: 1.5 });
+        } else if(attempts >= 3) {
+            showFeedback(false);
+        } else {
+            document.getElementById("smiley").innerHTML = "❌";
+        }
+    }
+}
+
+function showFeedback(isCorrect){
+    let layer = countryLayers[currentCountry];
+    let overlay = isCorrect ? document.getElementById("correct") : document.getElementById("solution");
+    let targetCenter = layer.getBounds().getCenter();
+    
+    let info = `<b>${currentCountry}</b><br><small>Hauptstadt: ${capitals[currentCountry]}</small>`;
+    
+    map.flyTo(targetCenter, 5, { duration: 1.2 });
+    layer.setStyle({ fillColor: isCorrect ? "#22c55e" : "#ef4444", fillOpacity: 0.9, weight: 3, color: "white" });
+    layer.bringToFront();
+
+    overlay.innerHTML = isCorrect ? `Richtig! ✨<br>${info}` : `Lösung:<br>${info}`;
+    overlay.style.display = "block";
+    
+    setTimeout(() => {
+        overlay.style.display = "none";
+        currentPlayer = (currentPlayer + 1) % players.length;
+        nextTurn();
+    }, 3000);
+}
+
+function resetStyles(){
+    if(geoLayer) geoLayer.setStyle({ fillColor: "#e2e8f0", fillOpacity: 1, weight: 1, color: "#94a3b8" });
+}
+</script>
+</body>
+</html>
